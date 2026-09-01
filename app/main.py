@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app import access, activity, analytics_queries, config, fullstory_jobs, lenders, reports, security, totp
 from app.analytics_cache import warm_startup
-from app.analytics_db import AnalyticsNotConfigured
+from app.analytics_db import AnalyticsConnectionFailed, AnalyticsNotConfigured
 from app.auth import get_current_user_or_none, require_admin, require_user
 from app.db import SessionLocal, get_db, init_db
 from app.fullstory_jobs import FullStoryAutomationNotFound, JobAlreadyRunning
@@ -75,7 +75,7 @@ app.mount("/assets", NoStoreStaticFiles(directory=STATIC_DIR / "assets"), name="
 def _run_analytics(query_fn, *args, **kwargs):
     try:
         return query_fn(*args, **kwargs)
-    except AnalyticsNotConfigured as e:
+    except (AnalyticsNotConfigured, AnalyticsConnectionFailed) as e:
         raise HTTPException(status_code=503, detail=str(e))
 
 
@@ -443,7 +443,7 @@ def run_query(
 
     try:
         rows = spec.runner(params, user, db, region)
-    except AnalyticsNotConfigured as e:
+    except (AnalyticsNotConfigured, AnalyticsConnectionFailed) as e:
         raise HTTPException(status_code=503, detail=str(e))
 
     columns = list(rows[0].keys()) if rows else []
@@ -580,7 +580,9 @@ def get_admin_options():
     for region in config.REGIONS:
         try:
             region_lenders = analytics_queries.list_lenders(region)
-        except AnalyticsNotConfigured:
+        except (AnalyticsNotConfigured, AnalyticsConnectionFailed):
+            # One region being unconfigured or unreachable shouldn't take down the whole
+            # editor -- an admin can still grant lenders in whichever region is working.
             continue
         for row in region_lenders:
             sql_lenders.append({

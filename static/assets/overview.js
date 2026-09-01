@@ -15,16 +15,25 @@ async function loadReportsOverview() {
 async function loadMonitoringOverview() {
   const statRow = document.getElementById("monitoring-stats");
   try {
-    // US and EU are separate databases -- combine the stuck-applications count across both
-    // configured regions rather than picking just one for this at-a-glance tile.
+    // US, EU, and RBC are separate databases -- combine the stuck-applications count across
+    // every configured region rather than picking just one for this at-a-glance tile.
+    // allSettled (not all) so one region being down (e.g. a login failure on its DB) still
+    // shows the working regions' count instead of blanking the whole tile.
     const regions = await apiJson("/api/analytics/regions");
-    const results = await Promise.all(
+    const settled = await Promise.allSettled(
       regions
         .filter((r) => r.configured)
         .map((r) =>
           apiJson(`/api/analytics/run?query_id=stuck_applications_overview&threshold_hours=4&region=${r.region}`)
         )
     );
+    const results = settled.filter((s) => s.status === "fulfilled").map((s) => s.value);
+    const failedCount = settled.filter((s) => s.status === "rejected").length;
+
+    if (results.length === 0 && failedCount > 0) {
+      throw new Error("Unavailable -- all configured regions failed to respond.");
+    }
+
     // Each query caps at 500 rows (see get_stuck_applications_overview) -- a region hitting
     // that cap means there are at least that many, not exactly, so say so rather than
     // showing a false-precision exact combined count.
@@ -32,10 +41,13 @@ async function loadMonitoringOverview() {
     const total = results.reduce((sum, r) => sum + r.rows.length, 0);
     const displayCount = cappedAny ? `${total}+` : String(total);
     const valueColor = total > 0 ? "var(--status-critical)" : "var(--status-good)";
+    const partialNote =
+      failedCount > 0 ? `<div class="subtitle" style="margin-top: 4px">${failedCount} region(s) unavailable</div>` : "";
     statRow.innerHTML = `
       <div class="stat-tile">
         <div class="label">Stuck applications (4h+)</div>
         <div class="value" style="color: ${valueColor}">${displayCount}</div>
+        ${partialNote}
       </div>`;
   } catch (err) {
     statRow.innerHTML = `<p class="empty-state">${escapeHtml(err.message)}</p>`;
