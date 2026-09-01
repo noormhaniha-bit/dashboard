@@ -1,6 +1,7 @@
-"""Read-only connection to the ConsumerFinancing analytics replica. Kept separate from the
-PDF-browsing part of this app -- nothing here writes to the database or executes anything
-beyond the SELECT queries in analytics_queries.py.
+"""Read-only connections to the ConsumerFinancing analytics replicas -- one per region (US,
+EU), each a wholly separate SQL Server database. Kept separate from the PDF-browsing part of
+this app -- nothing here writes to the database or executes anything beyond the SELECT
+queries in analytics_queries.py.
 """
 
 import logging
@@ -17,23 +18,26 @@ class AnalyticsNotConfigured(Exception):
     pass
 
 
-_engine = None
+_engines: dict[str, Any] = {}
 
 
-def get_engine():
-    global _engine
-    if not config.ANALYTICS_DB_CONFIGURED:
+def get_engine(region: str):
+    if region not in config.ANALYTICS_DBS:
+        raise ValueError(f"Unknown analytics region: {region!r} (expected one of {config.REGIONS})")
+    cfg = config.ANALYTICS_DBS[region]
+    if not cfg.configured:
         raise AnalyticsNotConfigured(
-            "ANALYTICS_DB_HOST/ANALYTICS_DB_NAME/ANALYTICS_DB_USER are not set in .env."
+            f"{region}_ANALYTICS_DB_HOST/{region}_ANALYTICS_DB_NAME/{region}_ANALYTICS_DB_USER "
+            "are not set in .env."
         )
-    if _engine is None:
-        _engine = create_engine(config.analytics_sqlalchemy_url(), pool_pre_ping=True)
-    return _engine
+    if region not in _engines:
+        _engines[region] = create_engine(cfg.sqlalchemy_url(), pool_pre_ping=True)
+    return _engines[region]
 
 
-def run_query(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def run_query(sql: str, params: dict[str, Any] | None = None, *, region: str) -> list[dict[str, Any]]:
     params = params or {}
-    engine = get_engine()
+    engine = get_engine(region)
 
     # A list/tuple-valued param (e.g. "status NOT IN :excluded_statuses") needs an explicit
     # expanding bindparam -- without it, text() hands pyodbc the tuple as-is, which the SQL

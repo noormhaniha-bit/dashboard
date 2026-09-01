@@ -1,5 +1,7 @@
 import os
+from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 
@@ -15,45 +17,68 @@ REPORTS_ROOT_DIR: Path | None = Path(_raw_root).expanduser() if _raw_root else N
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8000"))
 
-# --- Read-only analytics connection (ConsumerFinancing replica) ---
-ANALYTICS_DB_HOST = os.getenv("ANALYTICS_DB_HOST", "").strip()
-ANALYTICS_DB_PORT = int(os.getenv("ANALYTICS_DB_PORT", "1433"))
-ANALYTICS_DB_NAME = os.getenv("ANALYTICS_DB_NAME", "").strip()
-ANALYTICS_DB_USER = os.getenv("ANALYTICS_DB_USER", "").strip()
-ANALYTICS_DB_PASSWORD = os.getenv("ANALYTICS_DB_PASSWORD", "").strip()
-ANALYTICS_DB_DRIVER = os.getenv("ANALYTICS_DB_DRIVER", "ODBC Driver 18 for SQL Server").strip()
-
-# Windows Authentication (Trusted_Connection) -- the SQL login is whatever Windows identity
-# this process runs as, so ANALYTICS_DB_USER/PASSWORD are ignored and not required when
-# this is on. If the app later runs as a Windows service under a different account, that
-# account (not your own login) needs SQL Server access.
-ANALYTICS_DB_TRUSTED_CONNECTION = os.getenv("ANALYTICS_DB_TRUSTED_CONNECTION", "false").strip().lower() == "true"
-
-ANALYTICS_DB_CONFIGURED = bool(
-    ANALYTICS_DB_HOST and ANALYTICS_DB_NAME and (ANALYTICS_DB_TRUSTED_CONNECTION or ANALYTICS_DB_USER)
-)
+# --- Read-only analytics connections -- US and EU are separate SQL Server databases (the
+# ConsumerFinancing platform runs one replica per region), so lenders/merchants/applications
+# in one are entirely disjoint from the other. Every analytics query is scoped to exactly one
+# region at a time -- see app/analytics_db.py and app/analytics_queries.py.
+REGIONS = ["US", "EU"]
 
 
-def analytics_sqlalchemy_url() -> str:
-    from urllib.parse import quote_plus
+@dataclass(frozen=True)
+class AnalyticsDbConfig:
+    region: str
+    host: str
+    port: int
+    name: str
+    user: str
+    password: str
+    driver: str
+    trusted_connection: bool
 
-    if ANALYTICS_DB_TRUSTED_CONNECTION:
-        odbc_str = (
-            f"DRIVER={{{ANALYTICS_DB_DRIVER}}};"
-            f"SERVER={ANALYTICS_DB_HOST},{ANALYTICS_DB_PORT};"
-            f"DATABASE={ANALYTICS_DB_NAME};"
-            "Trusted_Connection=yes;"
-            "TrustServerCertificate=yes;"
+    @property
+    def configured(self) -> bool:
+        return bool(self.host and self.name and (self.trusted_connection or self.user))
+
+    def sqlalchemy_url(self) -> str:
+        if self.trusted_connection:
+            odbc_str = (
+                f"DRIVER={{{self.driver}}};"
+                f"SERVER={self.host},{self.port};"
+                f"DATABASE={self.name};"
+                "Trusted_Connection=yes;"
+                "TrustServerCertificate=yes;"
+            )
+            return f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_str)}"
+
+        driver = quote_plus(self.driver)
+        password = quote_plus(self.password)
+        return (
+            f"mssql+pyodbc://{self.user}:{password}"
+            f"@{self.host}:{self.port}/{self.name}"
+            f"?driver={driver}&TrustServerCertificate=yes"
         )
-        return f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_str)}"
 
-    driver = quote_plus(ANALYTICS_DB_DRIVER)
-    password = quote_plus(ANALYTICS_DB_PASSWORD)
-    return (
-        f"mssql+pyodbc://{ANALYTICS_DB_USER}:{password}"
-        f"@{ANALYTICS_DB_HOST}:{ANALYTICS_DB_PORT}/{ANALYTICS_DB_NAME}"
-        f"?driver={driver}&TrustServerCertificate=yes"
+
+def _load_analytics_db_config(region: str) -> AnalyticsDbConfig:
+    prefix = f"{region}_ANALYTICS_DB_"
+    return AnalyticsDbConfig(
+        region=region,
+        host=os.getenv(f"{prefix}HOST", "").strip(),
+        port=int(os.getenv(f"{prefix}PORT", "1433")),
+        name=os.getenv(f"{prefix}NAME", "").strip(),
+        user=os.getenv(f"{prefix}USER", "").strip(),
+        password=os.getenv(f"{prefix}PASSWORD", "").strip(),
+        driver=os.getenv(f"{prefix}DRIVER", "ODBC Driver 18 for SQL Server").strip(),
+        # Windows Authentication (Trusted_Connection) -- the SQL login is whatever Windows
+        # identity this process runs as, so USER/PASSWORD are ignored and not required when
+        # this is on. If the app later runs as a Windows service under a different account,
+        # that account (not your own login) needs SQL Server access.
+        trusted_connection=os.getenv(f"{prefix}TRUSTED_CONNECTION", "false").strip().lower() == "true",
     )
+
+
+ANALYTICS_DBS: dict[str, AnalyticsDbConfig] = {region: _load_analytics_db_config(region) for region in REGIONS}
+ANY_ANALYTICS_DB_CONFIGURED = any(cfg.configured for cfg in ANALYTICS_DBS.values())
 
 
 # --- FullStory session-recording automation (Playwright/Node, launched as a subprocess) ---

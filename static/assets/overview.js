@@ -15,13 +15,23 @@ async function loadReportsOverview() {
 async function loadMonitoringOverview() {
   const statRow = document.getElementById("monitoring-stats");
   try {
-    const result = await apiJson("/api/analytics/run?query_id=stuck_applications_overview&threshold_hours=4");
-    const count = result.rows.length;
-    // The query caps at 500 rows (see get_stuck_applications_overview) -- hitting that cap
-    // means there are at least that many, not exactly, so say so rather than showing a false-
-    // precision exact count.
-    const displayCount = count >= 500 ? "500+" : String(count);
-    const valueColor = count > 0 ? "var(--status-critical)" : "var(--status-good)";
+    // US and EU are separate databases -- combine the stuck-applications count across both
+    // configured regions rather than picking just one for this at-a-glance tile.
+    const regions = await apiJson("/api/analytics/regions");
+    const results = await Promise.all(
+      regions
+        .filter((r) => r.configured)
+        .map((r) =>
+          apiJson(`/api/analytics/run?query_id=stuck_applications_overview&threshold_hours=4&region=${r.region}`)
+        )
+    );
+    // Each query caps at 500 rows (see get_stuck_applications_overview) -- a region hitting
+    // that cap means there are at least that many, not exactly, so say so rather than
+    // showing a false-precision exact combined count.
+    const cappedAny = results.some((r) => r.rows.length >= 500);
+    const total = results.reduce((sum, r) => sum + r.rows.length, 0);
+    const displayCount = cappedAny ? `${total}+` : String(total);
+    const valueColor = total > 0 ? "var(--status-critical)" : "var(--status-good)";
     statRow.innerHTML = `
       <div class="stat-tile">
         <div class="label">Stuck applications (4h+)</div>

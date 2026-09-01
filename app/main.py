@@ -36,16 +36,19 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
-    if config.ANALYTICS_DB_CONFIGURED:
-        # Pre-run the parameterless / rarely-changing analytics queries now, in the
-        # background, so the Analytics page's merchant/lender dropdowns and "top merchants"
-        # query are already cached by the time the first person opens it -- instead of that
-        # first "Run Query" click paying for the SQL Server round-trip.
-        warm_startup([
-            ("merchant list", analytics_queries.list_merchants),
-            ("lender list", analytics_queries.list_lenders),
-            ("top merchants (last month)", analytics_queries.get_top_merchants_last_month),
-        ])
+    # Pre-run the parameterless / rarely-changing analytics queries now, in the background, so
+    # the Analytics page's merchant/lender dropdowns and "top merchants" query are already
+    # cached by the time the first person opens it -- instead of that first "Run Query" click
+    # paying for the SQL Server round-trip. Each configured region warms independently.
+    warmers = []
+    for region in config.REGIONS:
+        if not config.ANALYTICS_DBS[region].configured:
+            continue
+        warmers.append((f"{region} merchant list", lambda r=region: analytics_queries.list_merchants(r)))
+        warmers.append((f"{region} lender list", lambda r=region: analytics_queries.list_lenders(r)))
+        warmers.append((f"{region} top merchants (last month)", lambda r=region: analytics_queries.get_top_merchants_last_month(r)))
+    if warmers:
+        warm_startup(warmers)
 
     yield
 
@@ -368,22 +371,38 @@ def get_pdf(rel_path: str, user: User = Depends(require_user), db: Session = Dep
 # ---------------------------------------------------------------------------
 
 
+def _require_region(region: str) -> None:
+    if region not in config.REGIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown region '{region}' (expected one of {config.REGIONS})")
+
+
+@app.get("/api/analytics/regions")
+def get_analytics_regions(_user: User = Depends(require_user)):
+    """Which regions actually have a configured DB connection -- lets the frontend hide/disable
+    a region toggle option for one that isn't set up yet instead of erroring on first use."""
+    return [{"region": r, "configured": config.ANALYTICS_DBS[r].configured} for r in config.REGIONS]
+
+
 @app.get("/api/analytics/merchants")
-def get_merchants(lender_id: str | None = None, user: User = Depends(require_user), db: Session = Depends(get_db)):
-    allowed = access.allowed_analytics_merchants(db, user)
+def get_merchants(
+    region: str, lender_id: str | None = None, user: User = Depends(require_user), db: Session = Depends(get_db)
+):
+    _require_region(region)
+    allowed = access.allowed_analytics_merchants(db, user, region)
     if lender_id:
-        rows = _run_analytics(analytics_queries.get_merchants_by_lender, lender_id)
+        rows = _run_analytics(analytics_queries.get_merchants_by_lender, region, lender_id)
     else:
-        rows = _run_analytics(analytics_queries.list_merchants)
+        rows = _run_analytics(analytics_queries.list_merchants, region)
     if allowed is None:
         return rows
     return [r for r in rows if r["merchant_id"] in allowed]
 
 
 @app.get("/api/analytics/lenders")
-def get_lenders(user: User = Depends(require_user), db: Session = Depends(get_db)):
-    allowed = access.allowed_analytics_lenders(db, user)
-    rows = _run_analytics(analytics_queries.list_lenders)
+def get_lenders(region: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    _require_region(region)
+    allowed = access.allowed_analytics_lenders(db, user, region)
+    rows = _run_analytics(analytics_queries.list_lenders, region)
     if allowed is None:
         return rows
     return [r for r in rows if r["lender_id"] in allowed]
@@ -405,7 +424,10 @@ def get_query_catalog(_user: User = Depends(require_user)):
 
 
 @app.get("/api/analytics/run")
-def run_query(query_id: str, request: Request, user: User = Depends(require_user), db: Session = Depends(get_db)):
+def run_query(
+    query_id: str, region: str, request: Request, user: User = Depends(require_user), db: Session = Depends(get_db)
+):
+    _require_region(region)
     spec = QUERY_REGISTRY.get(query_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Unknown query")
@@ -420,7 +442,7 @@ def run_query(query_id: str, request: Request, user: User = Depends(require_user
         params[p.name] = raw
 
     try:
-        rows = spec.runner(params, user, db)
+        rows = spec.runner(params, user, db, region)
     except AnalyticsNotConfigured as e:
         raise HTTPException(status_code=503, detail=str(e))
 
@@ -525,6 +547,11 @@ def get_admin_options():
 
     PDF lenders come from the known business lender list (app/lenders.py), not just folders
     that already exist -- so an admin can grant a lender before its first report has landed.
+
+    Analytics lenders are fetched from each configured region's DB independently and tagged
+    with their region; the resource_key an admin grants is region-prefixed (see
+    access.region_lender_key) since a lender_id from the US replica and one from the EU
+    replica are unrelated values that could even collide.
     """
     existing_folders = set()
     try:
@@ -550,10 +577,18 @@ def get_admin_options():
         pdf_lenders.append({"key": extra_folder, "label": extra_folder, "has_reports": True})
 
     sql_lenders = []
-    try:
-        sql_lenders = analytics_queries.list_lenders()
-    except AnalyticsNotConfigured:
-        pass
+    for region in config.REGIONS:
+        try:
+            region_lenders = analytics_queries.list_lenders(region)
+        except AnalyticsNotConfigured:
+            continue
+        for row in region_lenders:
+            sql_lenders.append({
+                "key": access.region_lender_key(region, row["lender_id"]),
+                "lender_id": row["lender_id"],
+                "lender_name": row["lender_name"],
+                "region": region,
+            })
 
     return {"pdf_lenders": pdf_lenders, "lenders": sql_lenders}
 

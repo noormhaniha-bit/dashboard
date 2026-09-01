@@ -170,10 +170,11 @@ async function openAccessEditor(userId, email) {
   buildCheckboxGrid(
     document.getElementById("lender-checkboxes"),
     adminOptions.lenders,
-    "lender_id",
+    "key",
     "lender_name",
     new Set(current.analytics_lenders),
-    "lender"
+    "lender",
+    (opt) => `(${opt.region})`
   );
 
   document.getElementById("access-editor").scrollIntoView({ behavior: "smooth", block: "start" });

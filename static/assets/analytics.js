@@ -6,6 +6,47 @@ let lastResultColumns = [];
 let analyticsInitialized = false;
 
 const RECENT_QUERIES_KEY = "analytics_recent_queries";
+const REGION_KEY = "analytics_region";
+
+function currentRegion() {
+  return document.getElementById("region-select").value;
+}
+
+async function initRegionSelect() {
+  const select = document.getElementById("region-select");
+  let regions = [{ region: "US", configured: true }, { region: "EU", configured: true }];
+  try {
+    regions = await apiJson("/api/analytics/regions");
+  } catch {
+    // Fall back to both enabled -- the actual query call will surface a clearer 503 if a
+    // region turns out not to be configured.
+  }
+
+  for (const opt of select.options) {
+    const info = regions.find((r) => r.region === opt.value);
+    if (info && !info.configured) {
+      opt.disabled = true;
+      opt.textContent = `${opt.value} (not configured)`;
+    }
+  }
+
+  const saved = localStorage.getItem(REGION_KEY);
+  const firstConfigured = regions.find((r) => r.configured)?.region;
+  if (saved && !select.querySelector(`option[value="${saved}"]`)?.disabled) {
+    select.value = saved;
+  } else if (firstConfigured) {
+    select.value = firstConfigured;
+  }
+
+  select.addEventListener("change", async () => {
+    try {
+      localStorage.setItem(REGION_KEY, select.value);
+    } catch {
+      // storage unavailable/full -- the selection still works for this load
+    }
+    await onQueryChange();
+  });
+}
 
 function loadRecentQueries() {
   try {
@@ -120,7 +161,13 @@ async function renderParamInputs(spec) {
       label.appendChild(inputEl);
       container.appendChild(label);
       paramInputs[p.name] = { el: inputEl, spec: p };
-      await populateSelectFromApi(inputEl, "/api/analytics/lenders", "lender_id", "lender_name", "Select a lender");
+      await populateSelectFromApi(
+        inputEl,
+        `/api/analytics/lenders?region=${encodeURIComponent(currentRegion())}`,
+        "lender_id",
+        "lender_name",
+        "Select a lender"
+      );
       lenderSelectEl = inputEl;
       continue;
     } else if (p.type === "merchant_select") {
@@ -132,7 +179,13 @@ async function renderParamInputs(spec) {
         inputEl.innerHTML = `<option value="">Select a lender first</option>`;
         inputEl.disabled = true;
       } else {
-        await populateSelectFromApi(inputEl, "/api/analytics/merchants", "merchant_id", "merchant_name", "Select a merchant");
+        await populateSelectFromApi(
+          inputEl,
+          `/api/analytics/merchants?region=${encodeURIComponent(currentRegion())}`,
+          "merchant_id",
+          "merchant_name",
+          "Select a merchant"
+        );
       }
       continue;
     } else if (p.type === "date") {
@@ -174,7 +227,7 @@ async function populateMerchantsForLender(lenderSelectEl, merchantEntry) {
   merchantEntry.el.innerHTML = `<option value="">Loading…</option>`;
   await populateSelectFromApi(
     merchantEntry.el,
-    `/api/analytics/merchants?lender_id=${encodeURIComponent(lenderId)}`,
+    `/api/analytics/merchants?region=${encodeURIComponent(currentRegion())}&lender_id=${encodeURIComponent(lenderId)}`,
     "merchant_id",
     "merchant_name",
     "Select a merchant"
@@ -201,7 +254,7 @@ async function applySavedParams(spec, savedParams) {
 }
 
 function buildQueryString(spec) {
-  const parts = [`query_id=${encodeURIComponent(spec.id)}`];
+  const parts = [`query_id=${encodeURIComponent(spec.id)}`, `region=${encodeURIComponent(currentRegion())}`];
   for (const p of spec.params) {
     const value = paramInputs[p.name]?.el.value ?? "";
     if (value === "" && !p.required) continue;
@@ -415,6 +468,8 @@ async function initAnalytics() {
   if (analyticsInitialized) return;
   analyticsInitialized = true;
 
+  await initRegionSelect();
+
   const select = document.getElementById("query-select");
   try {
     catalog = await apiJson("/api/analytics/catalog");
@@ -452,6 +507,12 @@ async function applyDeepLinkFromUrl() {
 
   const spec = catalog.find((q) => q.id === queryId);
   if (!spec) return;
+
+  const region = params.get("region");
+  const regionSelect = document.getElementById("region-select");
+  if (region && !regionSelect.querySelector(`option[value="${region}"]`)?.disabled) {
+    regionSelect.value = region;
+  }
 
   document.getElementById("query-select").value = queryId;
   await onQueryChange();

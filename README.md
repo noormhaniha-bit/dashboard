@@ -102,22 +102,32 @@ Edit `.env` and set `REPORTS_ROOT_DIR` to the real folder where your generated P
 
 ### Analytics DB (optional)
 
-To enable the Analytics tab, also set in `.env`. If your DB host uses **Windows
-Authentication** (the common case for an internal SQL Server) -- which this app now defaults
-to -- no SQL login/password is needed at all; it connects as whichever Windows account runs
-the process:
+The US and EU ConsumerFinancing replicas are separate SQL Server databases with disjoint
+lenders/merchants/applications, so this app connects to both independently -- the Analytics
+page has a US/EU toggle that picks which one a query runs against. Configure either or both
+regions in `.env`; a region you leave unconfigured just shows as unavailable in the toggle
+instead of erroring.
+
+If your DB host uses **Windows Authentication** (the common case for an internal SQL Server)
+-- which this app now defaults to -- no SQL login/password is needed at all; it connects as
+whichever Windows account runs the process:
 
 ```
-ANALYTICS_DB_HOST=your-replica-host
-ANALYTICS_DB_NAME=ConsumerFinancing_Replica
-ANALYTICS_DB_TRUSTED_CONNECTION=true
-ANALYTICS_DB_DRIVER=ODBC Driver 18 for SQL Server
+US_ANALYTICS_DB_HOST=your-us-replica-host
+US_ANALYTICS_DB_NAME=ConsumerFinancing_Replica_US
+US_ANALYTICS_DB_TRUSTED_CONNECTION=true
+US_ANALYTICS_DB_DRIVER=ODBC Driver 18 for SQL Server
+
+EU_ANALYTICS_DB_HOST=your-eu-replica-host
+EU_ANALYTICS_DB_NAME=ConsumerFinancing_Replica_EU
+EU_ANALYTICS_DB_TRUSTED_CONNECTION=true
+EU_ANALYTICS_DB_DRIVER=ODBC Driver 18 for SQL Server
 ```
 
-If instead your host uses SQL Server authentication (a login + password), set
-`ANALYTICS_DB_TRUSTED_CONNECTION=false` and fill in `ANALYTICS_DB_USER` / `ANALYTICS_DB_PASSWORD`
--- use a **read-only** login there, since this app only ever runs `SELECT` queries, but the
-login itself should enforce that too, as a second layer of protection.
+If instead a host uses SQL Server authentication (a login + password), set that region's
+`_TRUSTED_CONNECTION=false` and fill in its `_USER` / `_PASSWORD` -- use a **read-only** login
+there, since this app only ever runs `SELECT` queries, but the login itself should enforce
+that too, as a second layer of protection.
 
 Check which ODBC driver is actually installed on your machine first -- 17 and 18 are not
 interchangeable, and using the wrong name will fail to connect:
@@ -126,8 +136,8 @@ interchangeable, and using the wrong name will fail to connect:
 .venv\Scripts\python.exe -c "import pyodbc; print(pyodbc.drivers())"
 ```
 
-Leave `ANALYTICS_DB_HOST` blank and the Analytics tab just shows "not configured" instead of
-erroring -- the PDF viewer is unaffected either way.
+Leave both `*_ANALYTICS_DB_HOST` blank and the Analytics tab just shows "not configured"
+instead of erroring -- the PDF viewer is unaffected either way.
 
 **Note on Windows Auth if you ever run this as a service:** the identity that matters is
 whichever Windows account the Python process itself runs as -- if that's your own interactive
