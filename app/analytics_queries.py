@@ -2,9 +2,9 @@
 from jifiti_useful_queries.sql. All filters are bound parameters -- nothing here builds SQL
 by string concatenation.
 
-Every function takes `region` (one of app.config.REGIONS, e.g. "US"/"EU"/"RBC") as its first
-argument and forwards it to run_query, which picks the matching database connection -- each
-region is a wholly separate database, so a query never spans more than one.
+Every function takes `region` ("US" or "EU") as its first argument and forwards it to
+run_query, which picks the matching database connection -- the US and EU replicas are
+wholly separate databases, so a query never spans both.
 
 NOTE: `get_stuck_applications` takes `excluded_statuses` explicitly rather than hardcoding
 them, because the original query's status list reads as terminal-looking statuses inside a

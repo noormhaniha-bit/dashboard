@@ -2,7 +2,7 @@
 a chart hint, so the frontend can render a query picker -> per-query input form -> table +
 chart generically, without one-off UI code per query.
 
-Every runner takes `region` (one of app.config.REGIONS, e.g. "US"/"EU"/"RBC") as call context, the same way it takes `user` and
+Every runner takes `region` ("US" or "EU") as call context, the same way it takes `user` and
 `db` -- the page-level region toggle picks it, not a per-query form field, since it applies to
 every query the same way. Every runner enforces access itself (rather than a generic wrapper
 in main.py) because the right check differs by query shape:

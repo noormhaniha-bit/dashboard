@@ -19,11 +19,9 @@ PORT = int(os.getenv("PORT", "8000"))
 
 # --- Read-only analytics connections -- US and EU are separate SQL Server databases (the
 # ConsumerFinancing platform runs one replica per region), so lenders/merchants/applications
-# in one are entirely disjoint from the other. RBC is a third, dedicated server: RBC's US
-# business runs on its own database rather than the shared US replica, and RBC data exists
-# only there -- the shared US replica has none of it. Every analytics query is scoped to
-# exactly one of these at a time -- see app/analytics_db.py and app/analytics_queries.py.
-REGIONS = ["US", "EU", "RBC"]
+# in one are entirely disjoint from the other. Every analytics query is scoped to exactly one
+# region at a time -- see app/analytics_db.py and app/analytics_queries.py.
+REGIONS = ["US", "EU"]
 
 
 @dataclass(frozen=True)
