@@ -8,6 +8,7 @@ import logging
 from typing import Any
 
 from sqlalchemy import bindparam, create_engine, text
+from sqlalchemy.exc import DBAPIError
 
 from app import config
 
@@ -16,6 +17,14 @@ logger = logging.getLogger(__name__)
 
 class AnalyticsNotConfigured(Exception):
     pass
+
+
+class AnalyticsConnectionFailed(Exception):
+    """The region's host/name/user are set, but the DB itself rejected or couldn't complete
+    the connection (bad login, network unreachable, etc.) -- distinct from AnalyticsNotConfigured
+    (nothing was even attempted because .env is missing values), so callers can tell "not set
+    up yet" apart from "set up but broken" and the API can still fail cleanly (503, not a raw
+    500 traceback) instead of leaking a driver-level stack trace to the browser."""
 
 
 _engines: dict[str, Any] = {}
@@ -48,6 +57,18 @@ def run_query(sql: str, params: dict[str, Any] | None = None, *, region: str) ->
     if expanding:
         stmt = stmt.bindparams(*(bindparam(name, expanding=True) for name in expanding))
 
-    with engine.connect() as conn:
-        result = conn.execute(stmt, params)
-        return [dict(row) for row in result.mappings()]
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(stmt, params)
+            return [dict(row) for row in result.mappings()]
+    except DBAPIError as e:
+        # Login failures, an unreachable host, a driver mismatch, etc. -- the config is
+        # present (get_engine already checked that) but the DB itself couldn't be used. Log
+        # the full driver error for whoever has to fix the DB side; the caller only needs to
+        # know which region broke, not the raw pyodbc/ODBC message.
+        logger.error("%s analytics DB query failed: %s", region, e, exc_info=True)
+        raise AnalyticsConnectionFailed(
+            f"The {region} analytics database is configured but the connection failed -- check "
+            f"that the {region}_ANALYTICS_DB_* settings are correct and the account running this "
+            "app has access. See the server log for the underlying driver error."
+        ) from e

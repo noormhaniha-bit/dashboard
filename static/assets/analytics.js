@@ -14,11 +14,11 @@ function currentRegion() {
 
 async function initRegionSelect() {
   const select = document.getElementById("region-select");
-  let regions = [{ region: "US", configured: true }, { region: "EU", configured: true }];
+  let regions = [{ region: "US", configured: true }, { region: "EU", configured: true }, { region: "RBC", configured: true }];
   try {
     regions = await apiJson("/api/analytics/regions");
   } catch {
-    // Fall back to both enabled -- the actual query call will surface a clearer 503 if a
+    // Fall back to all enabled -- the actual query call will surface a clearer 503 if a
     // region turns out not to be configured.
   }
 
