@@ -1,0 +1,16 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+python-dotenv>=1.0.0
+python-multipart>=0.0.9  # form/file uploads (FullStory applicationId list upload)
+
+# Analytics (read-only SQL Server connection)
+sqlalchemy>=2.0.30
+pyodbc>=5.1.0
+
+# Auth (app-local users/access, stored in SQLite via the same SQLAlchemy dependency above)
+bcrypt>=4.1.0
+itsdangerous>=2.2.0
+
+# Two-factor auth (TOTP -- Google Authenticator, Authy, etc.)
+pyotp>=2.9.0
+qrcode[pil]>=7.4.2

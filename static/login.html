@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      document.documentElement.dataset.theme = localStorage.getItem("theme") || "dark";
+    </script>
+    <title>Sign in — Ops Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+    <link rel="stylesheet" href="/assets/style.css" />
+  </head>
+  <body>
+    <div class="login-shell">
+      <div class="login-card">
+        <div class="brand">
+          <img src="/assets/jifiti-logo-navy.png" alt="Jifiti" class="brand-logo brand-logo-light" />
+          <img src="/assets/jifiti-logo-white.png" alt="Jifiti" class="brand-logo brand-logo-dark" />
+          <span>Ops Dashboard</span>
+        </div>
+
+        <form id="login-form">
+          <p class="subtitle">Sign in with your teammate account</p>
+          <label>Email<input type="email" id="email" required autofocus /></label>
+          <label>Password<input type="password" id="password" required /></label>
+          <p id="error" class="error-text" style="display: none"></p>
+          <button type="submit" class="primary" id="submit-btn">Sign in</button>
+        </form>
+
+        <form id="totp-form" style="display: none">
+          <p class="subtitle">Enter the 6-digit code from your authenticator app</p>
+          <label>Code<input type="text" id="totp-code" class="totp-code-input" maxlength="6" inputmode="numeric" autofocus required /></label>
+          <p id="totp-error" class="error-text" style="display: none"></p>
+          <button type="submit" class="primary" id="totp-submit-btn">Verify</button>
+          <button type="button" class="secondary" id="totp-back-btn">Back</button>
+        </form>
+      </div>
+    </div>
+    <script src="/assets/login.js"></script>
+  </body>
+</html>

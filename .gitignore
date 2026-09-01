@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+app_data.db
+
+# FullStory automation (Node) -- credentials, deps, and generated output
+automation/fullstory/.env
+automation/fullstory/node_modules/
+automation/fullstory/playwright/.auth/
+automation/fullstory/temp_recordings/
