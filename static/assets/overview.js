@@ -15,8 +15,8 @@ async function loadReportsOverview() {
 async function loadMonitoringOverview() {
   const statRow = document.getElementById("monitoring-stats");
   try {
-    // US, EU, and RBC are separate databases -- combine the stuck-applications count across
-    // every configured region rather than picking just one for this at-a-glance tile.
+    // US and EU are separate databases -- combine the stuck-applications count across every
+    // configured region rather than picking just one for this at-a-glance tile.
     // allSettled (not all) so one region being down (e.g. a login failure on its DB) still
     // shows the working regions' count instead of blanking the whole tile.
     const regions = await apiJson("/api/analytics/regions");
