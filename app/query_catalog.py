@@ -2,8 +2,10 @@
 a chart hint, so the frontend can render a query picker -> per-query input form -> table +
 chart generically, without one-off UI code per query.
 
-Every runner enforces access itself (rather than a generic wrapper in main.py) because the
-right check differs by query shape:
+Every runner takes `region` ("US" or "EU") as call context, the same way it takes `user` and
+`db` -- the page-level region toggle picks it, not a per-query form field, since it applies to
+every query the same way. Every runner enforces access itself (rather than a generic wrapper
+in main.py) because the right check differs by query shape:
   - queries keyed directly by merchant_id/lender_id check that key against the user's grants
     before running
   - queries keyed by an arbitrary id (application_id, a customer search term) can't be
@@ -39,7 +41,7 @@ class QuerySpec:
     description: str
     params: list[QueryParam]
     chart: dict | None
-    runner: Callable[[dict, User, Session], list[dict]] = field(repr=False)
+    runner: Callable[[dict, User, Session, str], list[dict]] = field(repr=False)
 
 
 def _require(allowed: set[str] | None, key: str, what: str) -> None:
@@ -56,78 +58,78 @@ def _filter_by_merchant(rows: list[dict], allowed: set[str] | None) -> list[dict
 # --- runners ---------------------------------------------------------------
 
 
-def _run_daily_volume(p, user, db):
-    _require(access.allowed_analytics_merchants(db, user), p["merchant_id"], "merchant")
-    return analytics_queries.get_daily_application_volume(p["merchant_id"], p["date_from"], p["date_to"])
+def _run_daily_volume(p, user, db, region):
+    _require(access.allowed_analytics_merchants(db, user, region), p["merchant_id"], "merchant")
+    return analytics_queries.get_daily_application_volume(region, p["merchant_id"], p["date_from"], p["date_to"])
 
 
-def _run_stuck_applications(p, user, db):
-    _require(access.allowed_analytics_merchants(db, user), p["merchant_id"], "merchant")
+def _run_stuck_applications(p, user, db, region):
+    _require(access.allowed_analytics_merchants(db, user, region), p["merchant_id"], "merchant")
     return analytics_queries.get_stuck_applications(
-        p["merchant_id"], analytics_queries.DEFAULT_TERMINAL_STATUSES, float(p["threshold_hours"])
+        region, p["merchant_id"], analytics_queries.DEFAULT_TERMINAL_STATUSES, float(p["threshold_hours"])
     )
 
 
-def _run_failure_rate(p, user, db):
-    _require(access.allowed_analytics_merchants(db, user), p["merchant_id"], "merchant")
-    return analytics_queries.get_transaction_failure_rate_by_hour(p["merchant_id"], int(p["hours"]))
+def _run_failure_rate(p, user, db, region):
+    _require(access.allowed_analytics_merchants(db, user, region), p["merchant_id"], "merchant")
+    return analytics_queries.get_transaction_failure_rate_by_hour(region, p["merchant_id"], int(p["hours"]))
 
 
-def _run_failures_by_status(p, user, db):
-    _require(access.allowed_analytics_merchants(db, user), p["merchant_id"], "merchant")
-    return analytics_queries.get_transaction_failures_by_status(p["merchant_id"], int(p["hours"]))
+def _run_failures_by_status(p, user, db, region):
+    _require(access.allowed_analytics_merchants(db, user, region), p["merchant_id"], "merchant")
+    return analytics_queries.get_transaction_failures_by_status(region, p["merchant_id"], int(p["hours"]))
 
 
-def _run_lender_performance(p, user, db):
-    _require(access.allowed_analytics_lenders(db, user), p["lender_id"], "lender")
-    return analytics_queries.get_lender_performance(p["lender_id"], p["date_from"], p["date_to"])
+def _run_lender_performance(p, user, db, region):
+    _require(access.allowed_analytics_lenders(db, user, region), p["lender_id"], "lender")
+    return analytics_queries.get_lender_performance(region, p["lender_id"], p["date_from"], p["date_to"])
 
 
-def _run_merchants_by_lender(p, user, db):
-    _require(access.allowed_analytics_lenders(db, user), p["lender_id"], "lender")
-    return analytics_queries.get_merchants_by_lender(p["lender_id"])
+def _run_merchants_by_lender(p, user, db, region):
+    _require(access.allowed_analytics_lenders(db, user, region), p["lender_id"], "lender")
+    return analytics_queries.get_merchants_by_lender(region, p["lender_id"])
 
 
-def _run_monthly_growth(p, user, db):
-    _require(access.allowed_analytics_merchants(db, user), p["merchant_id"], "merchant")
-    return analytics_queries.get_monthly_growth(p["merchant_id"], int(p["months"]))
+def _run_monthly_growth(p, user, db, region):
+    _require(access.allowed_analytics_merchants(db, user, region), p["merchant_id"], "merchant")
+    return analytics_queries.get_monthly_growth(region, p["merchant_id"], int(p["months"]))
 
 
-def _run_daily_activity_week(p, user, db):
-    _require(access.allowed_analytics_merchants(db, user), p["merchant_id"], "merchant")
-    return analytics_queries.get_daily_activity_by_week(p["merchant_id"], int(p["days"]))
+def _run_daily_activity_week(p, user, db, region):
+    _require(access.allowed_analytics_merchants(db, user, region), p["merchant_id"], "merchant")
+    return analytics_queries.get_daily_activity_by_week(region, p["merchant_id"], int(p["days"]))
 
 
-def _run_applications_by_weekday(p, user, db):
-    _require(access.allowed_analytics_merchants(db, user), p["merchant_id"], "merchant")
-    return analytics_queries.get_applications_by_weekday(p["merchant_id"], p["date_from"], p["date_to"])
+def _run_applications_by_weekday(p, user, db, region):
+    _require(access.allowed_analytics_merchants(db, user, region), p["merchant_id"], "merchant")
+    return analytics_queries.get_applications_by_weekday(region, p["merchant_id"], p["date_from"], p["date_to"])
 
 
-def _run_top_merchants(p, user, db):
-    rows = analytics_queries.get_top_merchants_last_month()
-    return _filter_by_merchant(rows, access.allowed_analytics_merchants(db, user))
+def _run_top_merchants(p, user, db, region):
+    rows = analytics_queries.get_top_merchants_last_month(region)
+    return _filter_by_merchant(rows, access.allowed_analytics_merchants(db, user, region))
 
 
-def _run_stuck_applications_overview(p, user, db):
+def _run_stuck_applications_overview(p, user, db, region):
     rows = analytics_queries.get_stuck_applications_overview(
-        analytics_queries.DEFAULT_TERMINAL_STATUSES, float(p["threshold_hours"])
+        region, analytics_queries.DEFAULT_TERMINAL_STATUSES, float(p["threshold_hours"])
     )
-    return _filter_by_merchant(rows, access.allowed_analytics_merchants(db, user))
+    return _filter_by_merchant(rows, access.allowed_analytics_merchants(db, user, region))
 
 
-def _run_application_lookup(p, user, db):
-    rows = analytics_queries.get_application_by_id(p["application_id"])
-    return _filter_by_merchant(rows, access.allowed_analytics_merchants(db, user))
+def _run_application_lookup(p, user, db, region):
+    rows = analytics_queries.get_application_by_id(region, p["application_id"])
+    return _filter_by_merchant(rows, access.allowed_analytics_merchants(db, user, region))
 
 
-def _run_application_transactions(p, user, db):
-    rows = analytics_queries.get_transactions_by_application(p["application_id"])
-    return _filter_by_merchant(rows, access.allowed_analytics_merchants(db, user))
+def _run_application_transactions(p, user, db, region):
+    rows = analytics_queries.get_transactions_by_application(region, p["application_id"])
+    return _filter_by_merchant(rows, access.allowed_analytics_merchants(db, user, region))
 
 
-def _run_customer_search(p, user, db):
-    rows = analytics_queries.search_customers(p["search_term"])
-    return _filter_by_merchant(rows, access.allowed_analytics_merchants(db, user))
+def _run_customer_search(p, user, db, region):
+    rows = analytics_queries.search_customers(region, p["search_term"])
+    return _filter_by_merchant(rows, access.allowed_analytics_merchants(db, user, region))
 
 
 # --- catalog ----------------------------------------------------------------

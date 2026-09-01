@@ -1,6 +1,10 @@
-"""Parameterized read-only queries against the ConsumerFinancing analytics replica, ported
+"""Parameterized read-only queries against the ConsumerFinancing analytics replicas, ported
 from jifiti_useful_queries.sql. All filters are bound parameters -- nothing here builds SQL
 by string concatenation.
+
+Every function takes `region` ("US" or "EU") as its first argument and forwards it to
+run_query, which picks the matching database connection -- the US and EU replicas are
+wholly separate databases, so a query never spans both.
 
 NOTE: `get_stuck_applications` takes `excluded_statuses` explicitly rather than hardcoding
 them, because the original query's status list reads as terminal-looking statuses inside a
@@ -21,19 +25,19 @@ DEFAULT_TERMINAL_STATUSES = [
 
 
 @cached(ttl=600)
-def list_merchants(limit: int = 500) -> list[dict]:
+def list_merchants(region: str, limit: int = 500) -> list[dict]:
     sql = "SELECT TOP (:limit) Id AS merchant_id, Name AS merchant_name FROM Merchants WHERE IsDeleted = 0 ORDER BY Name"
-    return run_query(sql, {"limit": limit})
+    return run_query(sql, {"limit": limit}, region=region)
 
 
 @cached(ttl=600)
-def list_lenders(limit: int = 500) -> list[dict]:
+def list_lenders(region: str, limit: int = 500) -> list[dict]:
     sql = "SELECT TOP (:limit) Id AS lender_id, Name AS lender_name FROM Lenders ORDER BY Name"
-    return run_query(sql, {"limit": limit})
+    return run_query(sql, {"limit": limit}, region=region)
 
 
 @cached(ttl=600)
-def list_merchants_with_lender(limit: int = 500) -> list[dict]:
+def list_merchants_with_lender(region: str, limit: int = 500) -> list[dict]:
     """Like list_merchants, but also exposes each merchant's LenderId -- used by the Admin
     access editor to let an admin filter the merchant grant checkboxes down to one lender's
     merchants instead of scrolling the full list. Many merchants have no LenderId set at all,
@@ -45,11 +49,11 @@ def list_merchants_with_lender(limit: int = 500) -> list[dict]:
         WHERE IsDeleted = 0
         ORDER BY Name
     """
-    return run_query(sql, {"limit": limit})
+    return run_query(sql, {"limit": limit}, region=region)
 
 
 @cached(ttl=300)
-def get_daily_application_volume(merchant_id: str, date_from: date, date_to: date) -> list[dict]:
+def get_daily_application_volume(region: str, merchant_id: str, date_from: date, date_to: date) -> list[dict]:
     sql = """
         SELECT
             CAST(dbo.TicksToDatetime2(A.DateCreated) AS DATE) AS application_date,
@@ -64,11 +68,11 @@ def get_daily_application_volume(merchant_id: str, date_from: date, date_to: dat
         GROUP BY CAST(dbo.TicksToDatetime2(A.DateCreated) AS DATE)
         ORDER BY application_date DESC
     """
-    return run_query(sql, {"date_from": date_from, "date_to": date_to, "merchant_id": merchant_id})
+    return run_query(sql, {"date_from": date_from, "date_to": date_to, "merchant_id": merchant_id}, region=region)
 
 
 @cached(ttl=60)
-def get_stuck_applications(merchant_id: str, excluded_statuses: list[str], stale_after_hours: float) -> list[dict]:
+def get_stuck_applications(region: str, merchant_id: str, excluded_statuses: list[str], stale_after_hours: float) -> list[dict]:
     sql = """
         SELECT
             la.Id AS application_id,
@@ -85,11 +89,11 @@ def get_stuck_applications(merchant_id: str, excluded_statuses: list[str], stale
         "excluded_statuses": tuple(excluded_statuses),
         "merchant_id": merchant_id,
         "stale_after_hours": stale_after_hours,
-    })
+    }, region=region)
 
 
 @cached(ttl=60)
-def get_stuck_applications_overview(excluded_statuses: list[str], stale_after_hours: float, limit: int = 500) -> list[dict]:
+def get_stuck_applications_overview(region: str, excluded_statuses: list[str], stale_after_hours: float, limit: int = 500) -> list[dict]:
     """Like get_stuck_applications, but across every merchant at once (unfiltered, same
     convention as get_top_merchants_last_month) -- feeds both the Overview alert tile and the
     "Stuck applications (all merchants)" Analytics catalog entry. Callers must post-filter
@@ -112,11 +116,11 @@ def get_stuck_applications_overview(excluded_statuses: list[str], stale_after_ho
         "limit": limit,
         "excluded_statuses": tuple(excluded_statuses),
         "stale_after_hours": stale_after_hours,
-    })
+    }, region=region)
 
 
 @cached(ttl=60)
-def get_transaction_failure_rate_by_hour(merchant_id: str, hours: int = 48) -> list[dict]:
+def get_transaction_failure_rate_by_hour(region: str, merchant_id: str, hours: int = 48) -> list[dict]:
     sql = """
         SELECT
             DATEADD(HOUR, DATEDIFF(HOUR, 0, dbo.TicksToDatetime2(t.DateCreated)), 0) AS hour_bucket_utc,
@@ -130,11 +134,11 @@ def get_transaction_failure_rate_by_hour(merchant_id: str, hours: int = 48) -> l
         GROUP BY DATEADD(HOUR, DATEDIFF(HOUR, 0, dbo.TicksToDatetime2(t.DateCreated)), 0)
         ORDER BY hour_bucket_utc DESC
     """
-    return run_query(sql, {"hours": hours, "merchant_id": merchant_id})
+    return run_query(sql, {"hours": hours, "merchant_id": merchant_id}, region=region)
 
 
 @cached(ttl=300)
-def get_lender_performance(lender_id: str, date_from: date, date_to: date) -> list[dict]:
+def get_lender_performance(region: str, lender_id: str, date_from: date, date_to: date) -> list[dict]:
     sql = """
         SELECT
             COUNT(la.Id) AS total_applications,
@@ -146,11 +150,11 @@ def get_lender_performance(lender_id: str, date_from: date, date_to: date) -> li
         WHERE CAST(dbo.TicksToDatetime2(la.DateCreated) AS DATE) BETWEEN :date_from AND :date_to
           AND la.LenderId = :lender_id
     """
-    return run_query(sql, {"date_from": date_from, "date_to": date_to, "lender_id": lender_id})
+    return run_query(sql, {"date_from": date_from, "date_to": date_to, "lender_id": lender_id}, region=region)
 
 
 @cached(ttl=60)
-def get_transaction_failures_by_status(merchant_id: str, hours: int = 24) -> list[dict]:
+def get_transaction_failures_by_status(region: str, merchant_id: str, hours: int = 24) -> list[dict]:
     """Ported from 1.2 -- failed/errored transactions grouped by status, last N hours."""
     sql = """
         SELECT
@@ -164,11 +168,11 @@ def get_transaction_failures_by_status(merchant_id: str, hours: int = 24) -> lis
         GROUP BY t.Status
         ORDER BY failed_count DESC
     """
-    return run_query(sql, {"merchant_id": merchant_id, "hours": hours})
+    return run_query(sql, {"merchant_id": merchant_id, "hours": hours}, region=region)
 
 
 @cached(ttl=900)
-def get_top_merchants_last_month() -> list[dict]:
+def get_top_merchants_last_month(region: str) -> list[dict]:
     """Ported from 2.2 -- top merchants by originated volume, last full calendar month.
     Unfiltered by merchant -- callers must post-filter rows by the requesting user's
     allowed merchant set (see app/query_catalog.py)."""
@@ -193,11 +197,11 @@ def get_top_merchants_last_month() -> list[dict]:
         GROUP BY m.Id, m.Name
         ORDER BY total_requested_amount DESC
     """
-    return run_query(sql)
+    return run_query(sql, region=region)
 
 
 @cached(ttl=900)
-def get_monthly_growth(merchant_id: str, months: int = 13) -> list[dict]:
+def get_monthly_growth(region: str, merchant_id: str, months: int = 13) -> list[dict]:
     """Ported from 2.3 -- month-over-month growth in originated volume, scoped to one
     merchant (the original query aggregated across ALL merchants with no filter, which
     would leak cross-merchant totals to a non-admin -- scoping it is a deliberate change)."""
@@ -222,11 +226,11 @@ def get_monthly_growth(merchant_id: str, months: int = 13) -> list[dict]:
         FROM MonthlyVolume
         ORDER BY month_start
     """
-    return run_query(sql, {"months": months, "merchant_id": merchant_id})
+    return run_query(sql, {"months": months, "merchant_id": merchant_id}, region=region)
 
 
 @cached(ttl=300)
-def get_application_by_id(application_id: str) -> list[dict]:
+def get_application_by_id(region: str, application_id: str) -> list[dict]:
     """Ported from 3.2 -- a single application with merchant/lender/customer context."""
     sql = """
         SELECT
@@ -247,11 +251,11 @@ def get_application_by_id(application_id: str) -> list[dict]:
         LEFT JOIN Customers AS c ON c.Id = la.CustomerId
         WHERE la.Id = :application_id
     """
-    return run_query(sql, {"application_id": application_id})
+    return run_query(sql, {"application_id": application_id}, region=region)
 
 
 @cached(ttl=120)
-def get_transactions_by_application(application_id: str) -> list[dict]:
+def get_transactions_by_application(region: str, application_id: str) -> list[dict]:
     """Ported from 3.3 -- payment history for a single application. Joins Applications only
     to expose MerchentId, so the caller can enforce merchant-based access on the result."""
     sql = """
@@ -268,11 +272,11 @@ def get_transactions_by_application(application_id: str) -> list[dict]:
         WHERE t.ApplicationId = :application_id
         ORDER BY t.DateCreated DESC
     """
-    return run_query(sql, {"application_id": application_id})
+    return run_query(sql, {"application_id": application_id}, region=region)
 
 
 @cached(ttl=60)
-def search_customers(search_term: str) -> list[dict]:
+def search_customers(region: str, search_term: str) -> list[dict]:
     """Ported from 3.1 -- customer + application history by email or phone. Unfiltered by
     merchant -- callers must post-filter rows by the requesting user's allowed merchant set."""
     sql = """
@@ -292,11 +296,11 @@ def search_customers(search_term: str) -> list[dict]:
         WHERE c.Email = :search_term OR c.MobilePhone = :search_term
         ORDER BY la.DateCreated DESC
     """
-    return run_query(sql, {"search_term": search_term})
+    return run_query(sql, {"search_term": search_term}, region=region)
 
 
 @cached(ttl=600)
-def get_merchants_by_lender(lender_id: str) -> list[dict]:
+def get_merchants_by_lender(region: str, lender_id: str) -> list[dict]:
     """Ported from 3.4 -- merchants tied to a given lender."""
     sql = """
         SELECT
@@ -310,11 +314,11 @@ def get_merchants_by_lender(lender_id: str) -> list[dict]:
           AND m.IsDeleted = 0
         ORDER BY m.Name
     """
-    return run_query(sql, {"lender_id": lender_id})
+    return run_query(sql, {"lender_id": lender_id}, region=region)
 
 
 @cached(ttl=120)
-def get_daily_activity_by_week(merchant_id: str, days: int = 7) -> list[dict]:
+def get_daily_activity_by_week(region: str, merchant_id: str, days: int = 7) -> list[dict]:
     """Daily (not hourly) transaction activity for the last N days -- default one week.
     Same shape as get_transaction_failure_rate_by_hour but bucketed by day, for a weekly
     view instead of an hourly one."""
@@ -331,11 +335,11 @@ def get_daily_activity_by_week(merchant_id: str, days: int = 7) -> list[dict]:
         GROUP BY CAST(dbo.TicksToDatetime2(t.DateCreated) AS DATE)
         ORDER BY activity_date ASC
     """
-    return run_query(sql, {"days": days, "merchant_id": merchant_id})
+    return run_query(sql, {"days": days, "merchant_id": merchant_id}, region=region)
 
 
 @cached(ttl=300)
-def get_applications_by_weekday(merchant_id: str, date_from: date, date_to: date) -> list[dict]:
+def get_applications_by_weekday(region: str, merchant_id: str, date_from: date, date_to: date) -> list[dict]:
     """Application volume grouped by day of week over a date range -- surfaces which weekdays
     run busiest/slowest for a merchant, complementing the day-by-day trend in
     get_daily_application_volume."""
@@ -353,4 +357,4 @@ def get_applications_by_weekday(merchant_id: str, date_from: date, date_to: date
             DATEPART(WEEKDAY, dbo.TicksToDatetime2(A.DateCreated))
         ORDER BY weekday_number
     """
-    return run_query(sql, {"date_from": date_from, "date_to": date_to, "merchant_id": merchant_id})
+    return run_query(sql, {"date_from": date_from, "date_to": date_to, "merchant_id": merchant_id}, region=region)
